@@ -9,6 +9,8 @@ const { OAuth2Client } = require('google-auth-library');
 const SKIP_EMAIL = process.env.SKIP_EMAIL === 'true';
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+const getValidationMessage = (errors) => errors.array().map(error => error.msg).join(', ');
+
 // ============ REGISTER ============
 router.post('/register', [
   body('username').trim().isLength({ min: 3 }).withMessage('Username must be at least 3 characters'),
@@ -18,14 +20,20 @@ router.post('/register', [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+      return res.status(400).json({
+        message: getValidationMessage(errors),
+        errors: errors.array()
+      });
     }
 
-    const { username, email, password } = req.body;
+    const username = req.body.username?.trim();
+    const email = req.body.email?.trim().toLowerCase();
+    const { password } = req.body;
 
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
-      return res.status(400).json({ message: 'User already exists' });
+      const field = user.email === email ? 'email' : 'username';
+      return res.status(400).json({ message: `This ${field} is already registered` });
     }
 
     user = new User({ 
@@ -63,7 +71,12 @@ router.post('/register', [
 // ============ LOGIN ============
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = req.body.email?.trim().toLowerCase();
+    const { password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
 
     const user = await User.findOne({ email });
     if (!user) {
@@ -103,7 +116,14 @@ router.post('/login', async (req, res) => {
 // ============ GOOGLE LOGIN ============
 router.post('/google', async (req, res) => {
   try {
+    if (!process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID === 'your-google-client-id') {
+      return res.status(503).json({ message: 'Google login is not configured' });
+    }
+
     const { credential } = req.body;
+    if (!credential) {
+      return res.status(400).json({ message: 'Google credential is required' });
+    }
     
     // Verify Google token
     const ticket = await googleClient.verifyIdToken({
@@ -162,7 +182,11 @@ router.post('/google', async (req, res) => {
 // ============ FORGOT PASSWORD ============
 router.post('/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body;
+    const email = req.body.email?.trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
     const user = await User.findOne({ email });
 
     if (!user) {
